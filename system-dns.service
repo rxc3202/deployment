@@ -1,0 +1,10 @@
+[Unit]
+Description=Linux DNS Stub for resolving DNS Queries
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ldns-resolver
+
+[Install]
+WantedBy=multi-user.target
