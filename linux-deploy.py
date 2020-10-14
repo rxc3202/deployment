@@ -77,7 +77,6 @@ class SilentWebserver(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     pid = os.fork()
-    #pid = 10
 
     # Child process will handle standing up webserver
     if pid == 0:
@@ -116,12 +115,4 @@ if __name__ == "__main__":
         print("[STATUS] Deployment Complete.")
         # Stop the webserver
         os.kill(pid, signal.SIGKILL)
-
-
-            
-
-
-
-
-
 
