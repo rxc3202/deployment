@@ -56,9 +56,13 @@ def deploy(host, username, password):
         status_code = 0
         err = ""
         for command in COMMANDS:
+            binary = command.split(" ")[0]
             _, stdout, stderr = client.exec_command(command)
             status_code += int(stdout.channel.recv_exit_status())
-            err += stderr.readline().strip() + "; "
+            err += f"\t[{binary}] {stderr.readline().strip()}\n"
+            if status_code:
+                break
+
         client.close()
         return status_code, err
     except paramiko.SSHException as e:
@@ -67,16 +71,20 @@ def deploy(host, username, password):
 def failure(output): print("\033[91m {}\033[00m" .format(output)) 
 def success(output): print("\033[92m {}\033[00m" .format(output)) 
 
+class SilentWebserver(SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        return 
+
 if __name__ == "__main__":
-    #pid = os.fork()
-    pid = 10
+    pid = os.fork()
+    #pid = 10
 
     # Child process will handle standing up webserver
     if pid == 0:
         try:
             # Stand up the webserver to host the binary and service file
             print(f"[STATUS] Starting Webserver...")
-            httpd = TCPServer((SERVER, 80), SimpleHTTPRequestHandler)
+            httpd = TCPServer((SERVER, 80), SilentWebserver)
             os.chdir(WEBDIR)
             server_process = Process(target=httpd.serve_forever)
             server_process.run()
@@ -101,7 +109,7 @@ if __name__ == "__main__":
                 ip = tasks[future]
                 status, out = future.result()
                 if int(status):
-                    failure(f"[{ip}] FAIL. \"{out}\"")
+                    failure(f"[{ip}] FAIL.\n{out}")
                 else:
                     success(f"[{ip}] SUCCESS.")
 
