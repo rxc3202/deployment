@@ -52,7 +52,6 @@ parser.add_argument("targets", type=str, nargs='+', help="Addresses to deploy to
 parser.add_argument("--teams", type=str, nargs=1, default="1", help="The number of teams. Will replace X with (e.g 1,2,4,9)")
 parser.add_argument("--hosts", type=str, nargs=1, default="1", help="The specific host numbers. Will replace Y. (e.g 1,2,4,8,20)")
 parser.add_argument("--threads", type=int, nargs=1, default=5, help="The number of workers to use to deploy")
-parser.add_argument("--specific", action="store_true", help="Don't use variables in addreses, interpet as literals")
 parser.add_argument("--check", action="store_true", help="View the targets to confirm before deployment. Will not run commands.")
 
 def process_args():
@@ -66,25 +65,19 @@ def process_args():
     if args.teams:
         args.teams = args.teams[0].split(',')
 
-
     # Generate targets from specifications
     addresses = []
-    if args.specific:
-        # If we provide specific IPs without ranges, we need to use --specific
-        addresses = args.targets
-    else:
-        # Otherwise we want to replae
-        team_number = re.compile(r"[xX]")
-        host_number = re.compile(r"[yY]")
-        for addr in args.targets:
-            for team in args.teams:
-                for host in args.hosts:
-                    # Substitute X placeholder for the team numbers
-                    out = team_number.sub(str(team), addr)
-                    # Substitute Y placeholder for specific hosts
-                    out = host_number.sub(host, out)
-                    if out not in addresses:
-                        addresses.append(out)
+    team_number = re.compile(r"[xX]")
+    host_number = re.compile(r"[yY]")
+    for addr in args.targets:
+        for team in args.teams:
+            for host in args.hosts:
+                # Substitute X placeholder for the team numbers
+                out = team_number.sub(str(team), addr)
+                # Substitute Y placeholder for specific hosts
+                out = host_number.sub(host, out)
+                if out not in addresses:
+                    addresses.append(out)
 
 def deploy(host, username, password):
     try:
@@ -100,13 +93,16 @@ def deploy(host, username, password):
             err += f"\t[{binary}] {stderr.readline().strip()}\n"
             if status_code:
                 break
-
         client.close()
         return status_code, err
-    except paramiko.SSHException as e:
-        return 1, str(e)
+
+    except Exception as e:
+        return 1, f"\t{str(e)}"
 
 def run():
+    global failures
+    failures = []
+
     if WEBDIR:
         pid = os.fork()
     else:
@@ -116,7 +112,7 @@ def run():
     if pid == 0:
         try:
             # Stand up the webserver to host the binary and service file
-            print(f"[STATUS] Serving {WEBDIR} @ {SERVER}:80...")
+            print(f"[STATUS] Serving {WEBDIR} @ http://{SERVER}:80...")
             httpd = TCPServer((SERVER, 80), SilentWebserver)
             os.chdir(WEBDIR)
             server_process = Process(target=httpd.serve_forever)
@@ -129,8 +125,6 @@ def run():
     else:
         time.sleep(1)
         print("[STATUS] Starting deployment...")
-
-        # Start deploying the binary
         with ThreadPoolExecutor(args.threads) as pool:
             # For each host we need to deploy to, submit a request
             # to the pool to run the command This will yield a
@@ -141,14 +135,17 @@ def run():
             for future in as_completed(tasks):
                 ip = tasks[future]
                 status, out = future.result()
-                if int(status):
-                    failure(f"[{ip}] FAIL.\n{out}")
+                if status:
+                    failure(f"[{ip}] FAILURE.\n{out}")
+                    failures.append(ip)
                 else:
                     success(f"[{ip}] SUCCESS.")
 
         print("[STATUS] Deployment Complete.")
         # Stop the webserver
-        os.kill(pid, signal.SIGKILL)
+        if WEBDIR:
+            os.kill(pid, signal.SIGKILL)
+        print(f"Failed Deployments: {' '.join(failures)}")
 
 def failure(output): print(f"\033[91m {output}\033[00m") 
 
