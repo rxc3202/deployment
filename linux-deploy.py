@@ -67,7 +67,12 @@ def process_args():
     if args.hosts:
         args.hosts = args.hosts[0].split(',')
     if args.teams:
-        args.teams = args.teams[0].split(',')
+        # if '-' in input, then it is a sequential range
+        if '-' in args.teams[0]:
+            start, end = args.teams[0].split('-')
+            args.teams = [x for x in range(int(start), int(end)+1)]
+        else:
+            args.teams = args.teams[0].split(',')
 
     # Generate targets from option specifications
     addresses = []
@@ -91,6 +96,7 @@ def deploy(host, username, password):
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         client.connect(hostname=host, username=username, password=password)
         for command in COMMANDS:
+            # Get the binary we're executing for logging purposes
             binary = command.split(" ")[0]
             _, stdout, stderr = client.exec_command(command)
             # all returns must be 0. Adding all together must == 0
